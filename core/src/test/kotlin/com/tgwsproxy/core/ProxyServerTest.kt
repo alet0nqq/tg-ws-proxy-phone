@@ -20,11 +20,14 @@ class ProxyServerTest {
         fake.close()
     }
 
-    private fun startProxy(poolSize: Int): ProxyServer {
+    private fun startProxy(
+        poolSize: Int,
+        dcRedirects: Map<Int, List<String>> = mapOf(2 to listOf("127.0.0.1"), 4 to listOf("127.0.0.1")),
+    ): ProxyServer {
         val cfg = ProxyConfig(
             port = 0,
             secret = secretHex,
-            dcRedirects = mapOf(2 to "127.0.0.1", 4 to "127.0.0.1"),
+            dcRedirects = dcRedirects,
             poolSize = poolSize,
             fallbackCfProxy = false,
             refreshCfDomains = false,
@@ -99,5 +102,17 @@ class ProxyServerTest {
         }
         assertEquals(2, fake.paths.size)
         assertEquals(2, proxy.stats.wsErrors.get())
+    }
+
+    @Test
+    fun unreachableIpIsSkippedAndWorkingIpRemembered() {
+        // 192.0.2.1 (TEST-NET-1) never answers; the proxy must move on to the next IP for the DC.
+        val proxy = startProxy(poolSize = 0, dcRedirects = mapOf(2 to listOf("192.0.2.1", "127.0.0.1")))
+        roundTrip(proxy, dc = 2, isMedia = false)
+        val t0 = System.nanoTime()
+        roundTrip(proxy, dc = 2, isMedia = false)
+        val secondMs = (System.nanoTime() - t0) / 1_000_000
+        assertEquals(2, proxy.stats.connectionsWs.get())
+        assertTrue(secondMs < 2_000, "second connection should go straight to the working IP, took ${secondMs}ms")
     }
 }

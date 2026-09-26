@@ -20,7 +20,13 @@ class Settings(context: Context) {
         set(v) = prefs.edit().putString(KEY_SECRET, v.lowercase()).apply()
 
     var dcIps: String
-        get() = prefs.getString(KEY_DC_IPS, null) ?: ProxyConfig.formatDcIpList(ProxyConfig.DEFAULT_DC_REDIRECTS)
+        get() {
+            val saved = prefs.getString(KEY_DC_IPS, null)
+            // Saved copies of the old default are upgraded to the new multi-IP default.
+            return if (saved == null || saved.trim() == ProxyConfig.formatDcIpList(ProxyConfig.LEGACY_DC_REDIRECTS)) {
+                ProxyConfig.formatDcIpList(ProxyConfig.DEFAULT_DC_REDIRECTS)
+            } else saved
+        }
         set(v) = prefs.edit().putString(KEY_DC_IPS, v).apply()
 
     var cfProxy: Boolean

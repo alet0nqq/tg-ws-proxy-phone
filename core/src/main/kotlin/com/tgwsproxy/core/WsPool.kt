@@ -17,11 +17,12 @@ internal class WsPool(
     private val log: ProxyLog,
     private val executor: ExecutorService,
     private val scheduler: ScheduledExecutorService,
-    private val connector: (ip: String, domain: String, path: String, timeoutMs: Int) -> RawWebSocket,
+    /** Opens a WS to [dc] trying its IPs/domains; null when nothing worked. */
+    private val connector: (dc: Int, domains: List<String>) -> RawWebSocket?,
 ) {
     private data class Key(val dc: Int, val isMedia: Boolean)
     private class Entry(val ws: RawWebSocket, val created: Long)
-    private class Target(val ip: String, val domains: List<String>)
+    private class Target(val domains: List<String>)
 
     private val idle = HashMap<Key, ArrayDeque<Entry>>()
     private val targets = HashMap<Key, Target>()
@@ -36,9 +37,9 @@ internal class WsPool(
         if (config.poolSize <= 0) return
         val now = now()
         synchronized(this) {
-            for ((dc, ip) in config.dcRedirects) for (media in listOf(false, true)) {
+            for (dc in config.dcRedirects.keys) for (media in listOf(false, true)) {
                 val key = Key(dc, media)
-                targets[key] = Target(ip, Endpoints.wsDomains(dc, media))
+                targets[key] = Target(Endpoints.wsDomains(dc, media))
                 lastUsed[key] = now
             }
         }
@@ -46,14 +47,14 @@ internal class WsPool(
         log.i("WS pool warmup started for ${config.dcRedirects.size} DC(s)")
     }
 
-    fun get(dc: Int, isMedia: Boolean, targetIp: String, domains: List<String>): RawWebSocket? {
+    fun get(dc: Int, isMedia: Boolean): RawWebSocket? {
         if (config.poolSize <= 0) return null
         val key = Key(dc, isMedia)
         val now = now()
         val stale = ArrayList<RawWebSocket>()
         var found: RawWebSocket? = null
         synchronized(this) {
-            targets[key] = Target(targetIp, domains)
+            targets.getOrPut(key) { Target(Endpoints.wsDomains(dc, isMedia)) }
             lastUsed[key] = now
             val bucket = idle[key]
             while (bucket != null && bucket.isNotEmpty()) {
@@ -148,7 +149,7 @@ internal class WsPool(
         try {
             val needed = synchronized(this) { config.poolSize - (idle[key]?.size ?: 0) }
             if (needed <= 0) return
-            val futures = (0 until needed).map { executor.submit<RawWebSocket?> { connectOne(target) } }
+            val futures = (0 until needed).map { executor.submit<RawWebSocket?> { connectOne(key, target) } }
             var connected = 0
             for (f in futures) {
                 val ws = runCatching { f.get() }.getOrNull() ?: continue
@@ -178,19 +179,8 @@ internal class WsPool(
         }
     }
 
-    private fun connectOne(target: Target): RawWebSocket? {
-        for (domain in target.domains) {
-            try {
-                return connector(target.ip, domain, Endpoints.WS_PATH, 8_000)
-            } catch (e: WsHandshakeError) {
-                if (e.isRedirect) continue
-                return null
-            } catch (e: Exception) {
-                return null
-            }
-        }
-        return null
-    }
+    private fun connectOne(key: Key, target: Target): RawWebSocket? =
+        runCatching { connector(key.dc, target.domains) }.getOrNull()
 
     private fun quietClose(ws: RawWebSocket) {
         executor.execute { runCatching { ws.close() } }

@@ -36,8 +36,8 @@ class ProxyServer(
     }
     private val executor: ExecutorService = Executors.newCachedThreadPool(threadFactory)
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(threadFactory)
-    private val pool = WsPool(config, stats, log, executor, scheduler) { ip, domain, path, timeout ->
-        connectTelegramWs(ip, domain, path, timeout)
+    private val pool = WsPool(config, stats, log, executor, scheduler) { dc, domains ->
+        openWs(dc, domains, Endpoints.WS_PATH, 8_000, candidateIps(dc), label = null).ws
     }
     private val balancer = CfBalancer()
     private val secret = config.secretBytes
@@ -46,6 +46,8 @@ class ProxyServer(
     private val wsBlacklist: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val dcFailUntil = ConcurrentHashMap<String, Long>()
     private val ipFailUntil = ConcurrentHashMap<String, Long>()
+    /** Last IP that worked for each DC; tried first next time. */
+    private val preferredIp = ConcurrentHashMap<Int, String>()
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -147,7 +149,7 @@ class ProxyServer(
         log.i("  Telegram MTProto WS Bridge Proxy")
         log.i("  Listening on   ${config.host}:$localPort")
         log.i("  Target DC IPs:")
-        for ((dc, ip) in config.dcRedirects.toSortedMap()) log.i("    DC$dc: $ip")
+        for ((dc, ips) in config.dcRedirects.toSortedMap()) log.i("    DC$dc: ${ips.joinToString()}")
         if (config.fallbackCfProxy) {
             val d = config.cfProxyUserDomains.joinToString().ifEmpty { "auto" }
             log.i("  CF proxy:      enabled ($d)")
@@ -199,10 +201,80 @@ class ProxyServer(
         throw last!!
     }
 
+    private class WsOutcome(val ws: RawWebSocket?, val failedRedirect: Boolean, val allRedirects: Boolean)
+
+    /** All configured IPs for [dc], the last one that worked first. */
+    private fun orderedIps(dc: Int): List<String> {
+        val all = config.dcRedirects[dc].orEmpty()
+        val pref = preferredIp[dc]
+        return if (pref != null && pref in all) listOf(pref) + (all - pref) else all
+    }
+
+    /** [orderedIps] without the ones that timed out recently. */
+    private fun candidateIps(dc: Int): List<String> {
+        val now = nowMs()
+        return orderedIps(dc).filter { now >= (ipFailUntil[it] ?: 0) }
+    }
+
+    /**
+     * Tries every IP x domain until a WebSocket opens (and [relayInit], if given, is sent).
+     * A TCP timeout puts that IP on cooldown and moves on to the next IP.
+     */
+    private fun openWs(
+        dc: Int, domains: List<String>, path: String, timeoutMs: Int, ips: List<String>,
+        label: String?, mediaTag: String = "", relayInit: ByteArray? = null,
+    ): WsOutcome {
+        var failedRedirect = false
+        var allRedirects = true
+        for (ip in ips) {
+            for (domain in domains) {
+                if (label != null) log.i("[$label] DC$dc$mediaTag -> wss://$domain$path via $ip")
+                try {
+                    val ws = connectTelegramWs(ip, domain, path, timeoutMs)
+                    if (relayInit != null) {
+                        try {
+                            ws.send(relayInit)
+                        } catch (e: IOException) {
+                            ws.close()
+                            throw e
+                        }
+                    }
+                    ipFailUntil.remove(ip)
+                    if (preferredIp.put(dc, ip) != ip && config.dcRedirects[dc].orEmpty().size > 1) {
+                        log.i("DC$dc: using $ip")
+                    }
+                    return WsOutcome(ws, false, false)
+                } catch (e: WsHandshakeError) {
+                    stats.wsErrors.incrementAndGet()
+                    if (e.isRedirect) {
+                        failedRedirect = true
+                        if (label != null) log.w("[$label] DC$dc$mediaTag got ${e.statusCode} from $domain -> ${e.location ?: "?"}")
+                    } else {
+                        allRedirects = false
+                        if (label != null) log.w("[$label] DC$dc$mediaTag WS handshake: ${e.statusLine}")
+                    }
+                } catch (e: Exception) {
+                    stats.wsErrors.incrementAndGet()
+                    if (RawWebSocket.isTimeout(e)) {
+                        ipFailUntil[ip] = nowMs() + IP_FAIL_COOLDOWN_MS
+                        if (label != null) {
+                            log.w("[$label] DC$dc$mediaTag WS to $ip timed out, cooldown ${IP_FAIL_COOLDOWN_MS / 1000}s")
+                        }
+                        break // next IP
+                    }
+                    allRedirects = false
+                    if (label != null) log.w("[$label] DC$dc$mediaTag WS connect via $ip failed: $e")
+                }
+            }
+        }
+        return WsOutcome(null, failedRedirect, allRedirects)
+    }
+
     /** Call when the device switches networks: cached failures and pooled sockets are stale. */
     fun onNetworkChanged() {
         if (!isRunning) return
         ipFailUntil.clear()
+        preferredIp.clear()
         dcFailUntil.clear()
         wsBlacklist.clear()
         frontingFirst = false
@@ -252,16 +324,18 @@ class ProxyServer(
             val dcKey = "$dc${if (isTestDc) "t" else ""}${if (isMedia) "m" else ""}"
             val now = nowMs()
             val wsPath = if (isTestDc) Endpoints.WS_PATH_TEST else Endpoints.WS_PATH
-            val target = config.dcRedirects[dc]
+            val allIps = config.dcRedirects[dc].orEmpty()
             val anyCf = config.fallbackCfProxy || config.cfProxyWorkerDomains.isNotEmpty()
+            // With a CF fallback available, skip IPs that timed out recently; otherwise keep trying them.
+            val ips = if (anyCf) candidateIps(dc) else orderedIps(dc)
             val domains = Endpoints.wsDomains(dc, isMedia)
 
             // Pooled sockets can be dead (e.g. after switching Wi-Fi <-> mobile): the relay init
             // is the first write, so a failure there is safe to retry on another connection.
             fun takePooled(): RawWebSocket? {
-                if (isTestDc || target == null) return null
+                if (isTestDc || allIps.isEmpty()) return null
                 while (true) {
-                    val pooled = pool.get(dc, isMedia, target, domains) ?: return null
+                    val pooled = pool.get(dc, isMedia) ?: return null
                     try {
                         pooled.send(relayInit)
                         return pooled
@@ -273,14 +347,14 @@ class ProxyServer(
             }
 
             var ws: RawWebSocket? = null
-            if (target == null || dcKey in wsBlacklist || (now < (ipFailUntil[target] ?: 0) && anyCf)) {
+            if (allIps.isEmpty() || dcKey in wsBlacklist || ips.isEmpty()) {
                 when {
-                    target == null -> log.i("[$label] DC$dc not in config -> fallback")
+                    allIps.isEmpty() -> log.i("[$label] DC$dc not in config -> fallback")
                     dcKey in wsBlacklist -> log.i("[$label] DC$dc$mediaTag WS blacklisted -> fallback")
                     else -> {
                         ws = takePooled()
-                        if (ws == null) log.i("[$label] DC$dc$mediaTag WS to $target timed out recently -> fallback")
-                        else log.i("[$label] DC$dc$mediaTag WS to $target timed out recently, but pool hit -> WS")
+                        if (ws == null) log.i("[$label] DC$dc$mediaTag WS IPs timed out recently -> fallback")
+                        else log.i("[$label] DC$dc$mediaTag WS IPs timed out recently, but pool hit -> WS")
                     }
                 }
                 if (ws == null) {
@@ -288,70 +362,28 @@ class ProxyServer(
                     return
                 }
             }
-            target!!
-
-            val wsTimeout = if (now < (dcFailUntil[dcKey] ?: 0)) 2_000 else 5_000
-            var failedRedirect = false
-            var timedOut = false
-            var allRedirects = true
 
             if (ws == null) ws = takePooled()
             if (ws != null) {
-                log.i("[$label] DC$dc$mediaTag -> pool hit via $target")
+                log.i("[$label] DC$dc$mediaTag -> pool hit")
             } else {
-                for (domain in domains) {
-                    log.i("[$label] DC$dc$mediaTag -> wss://$domain$wsPath via $target")
-                    try {
-                        val fresh = connectTelegramWs(target, domain, wsPath, wsTimeout)
-                        try {
-                            fresh.send(relayInit)
-                        } catch (e: IOException) {
-                            fresh.close()
-                            throw e
-                        }
-                        ws = fresh
-                        allRedirects = false
-                        break
-                    } catch (e: WsHandshakeError) {
-                        stats.wsErrors.incrementAndGet()
-                        if (e.isRedirect) {
-                            failedRedirect = true
-                            log.w("[$label] DC$dc$mediaTag got ${e.statusCode} from $domain -> ${e.location ?: "?"}")
-                        } else {
-                            allRedirects = false
-                            log.w("[$label] DC$dc$mediaTag WS handshake: ${e.statusLine}")
-                        }
-                    } catch (e: Exception) {
-                        stats.wsErrors.incrementAndGet()
-                        if (RawWebSocket.isTimeout(e)) {
-                            timedOut = true
-                            log.w("[$label] DC$dc$mediaTag WS connect timed out via $domain")
-                            break
-                        }
-                        allRedirects = false
-                        log.w("[$label] DC$dc$mediaTag WS connect failed: $e")
+                val wsTimeout = if (now < (dcFailUntil[dcKey] ?: 0)) 2_000 else 5_000
+                val outcome = openWs(dc, domains, wsPath, wsTimeout, ips, label, mediaTag, relayInit)
+                ws = outcome.ws
+                if (ws == null) {
+                    if (outcome.failedRedirect && outcome.allRedirects) {
+                        wsBlacklist.add(dcKey)
+                        log.w("[$label] DC$dc$mediaTag blacklisted for WS (all redirects)")
+                    } else {
+                        dcFailUntil[dcKey] = now + DC_FAIL_COOLDOWN_MS
+                        if (!outcome.failedRedirect) log.i("[$label] DC$dc$mediaTag WS failed for ${DC_FAIL_COOLDOWN_MS / 1000}s")
                     }
+                    if (doFallback(conn)) log.i("[$label] DC$dc$mediaTag fallback closed")
+                    else log.w("[$label] DC$dc$mediaTag no fallback available")
+                    return
                 }
             }
 
-            if (ws == null) {
-                if (timedOut) {
-                    ipFailUntil[target] = now + IP_FAIL_COOLDOWN_MS
-                    log.i("[$label] DC$dc$mediaTag WS to $target timed out, cooldown ${IP_FAIL_COOLDOWN_MS / 1000}s")
-                }
-                if (failedRedirect && allRedirects) {
-                    wsBlacklist.add(dcKey)
-                    log.w("[$label] DC$dc$mediaTag blacklisted for WS (all redirects)")
-                } else {
-                    dcFailUntil[dcKey] = now + DC_FAIL_COOLDOWN_MS
-                    if (!failedRedirect) log.i("[$label] DC$dc$mediaTag WS failed for ${DC_FAIL_COOLDOWN_MS / 1000}s")
-                }
-                if (doFallback(conn)) log.i("[$label] DC$dc$mediaTag fallback closed")
-                else log.w("[$label] DC$dc$mediaTag no fallback available")
-                return
-            }
-
-            ipFailUntil.remove(target)
             pool.reportSuccess(dc, isMedia)
             stats.connectionsWs.incrementAndGet()
             bridgeWs(conn, ws, MsgSplitter(relayInit, hs.proto))
@@ -429,7 +461,7 @@ class ProxyServer(
             val domain = "kws${c.dc}.$base"
             val ws = try {
                 RawWebSocket.connect(
-                    domain, domain, timeoutMs = 10_000,
+                    domain, domain, timeoutMs = CF_TIMEOUT_MS,
                     secure = !config.disableSecure, bufferSize = config.bufferSize,
                 )
             } catch (e: Exception) {
@@ -589,6 +621,7 @@ class ProxyServer(
     companion object {
         const val IP_FAIL_COOLDOWN_MS = 3_600_000L
         const val DC_FAIL_COOLDOWN_MS = 60_000L
-        const val MAX_CF_ATTEMPTS = 6
+        const val MAX_CF_ATTEMPTS = 3
+        const val CF_TIMEOUT_MS = 6_000
     }
 }

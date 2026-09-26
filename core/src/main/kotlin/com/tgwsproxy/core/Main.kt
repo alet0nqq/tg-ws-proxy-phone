@@ -33,7 +33,7 @@ fun main(args: Array<String>) {
                       --port N                 listen port (default 1443)
                       --host H                 listen host (default 127.0.0.1)
                       --secret HEX             32 hex chars (random if omitted)
-                      --dc-ip DC:IP            target IP for a DC (repeatable)
+                      --dc-ip DC:IP            target IP for a DC (repeatable, also per DC)
                       --pool-size N            warm WS connections per DC (default 2)
                       --buf-kb N               socket buffer size in KB (default 256)
                       --cfproxy-domain D       own Cloudflare-proxied domain (repeatable)

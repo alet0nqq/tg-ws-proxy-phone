@@ -122,8 +122,8 @@ class CryptoTest {
     @Test
     fun configParsing() {
         assertEquals(
-            mapOf(2 to "149.154.167.220", 4 to "1.2.3.4"),
-            ProxyConfig.parseDcIpList("2:149.154.167.220\n 4:1.2.3.4"),
+            mapOf(2 to listOf("149.154.167.220", "149.154.167.99"), 4 to listOf("1.2.3.4")),
+            ProxyConfig.parseDcIpList("2:149.154.167.220\n 4:1.2.3.4\n2:149.154.167.99\n2:149.154.167.220"),
         )
         assertEquals(listOf("a.com", "b.org"), ProxyConfig.parseDomainList("a.com, b.org A.com"))
         val cfg = ProxyConfig(secret = "00112233445566778899aabbccddeeff")

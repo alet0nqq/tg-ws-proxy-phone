@@ -8,8 +8,11 @@ data class ProxyConfig(
     val port: Int = 1443,
     /** 32 hex chars. */
     val secret: String = randomSecret(),
-    /** DC -> IP that serves kwsN.web.telegram.org. DCs not listed go straight to fallback. */
-    val dcRedirects: Map<Int, String> = DEFAULT_DC_REDIRECTS,
+    /**
+     * DC -> IPs that serve kwsN.web.telegram.org, tried in order (the last working one first).
+     * DCs not listed go straight to fallback.
+     */
+    val dcRedirects: Map<Int, List<String>> = DEFAULT_DC_REDIRECTS,
     val bufferSize: Int = 256 * 1024,
     /** Warm WS connections kept per DC (and per media flag). 0 disables the pool. */
     val poolSize: Int = 2,
@@ -47,29 +50,44 @@ data class ProxyConfig(
 
     companion object {
         const val DEFAULT_FRONTING_SNI = "sprinthost.ru"
-        val DEFAULT_DC_REDIRECTS: Map<Int, String> = mapOf(2 to "149.154.167.220", 4 to "149.154.167.220")
+        /**
+         * 149.154.167.220 is the upstream tg-ws-proxy default; the others are what
+         * kwsN.web.telegram.org resolves to in public DNS.
+         */
+        val DEFAULT_DC_REDIRECTS: Map<Int, List<String>> = linkedMapOf(
+            1 to listOf("149.154.174.100"),
+            2 to listOf("149.154.167.220", "149.154.167.99"),
+            3 to listOf("149.154.174.100"),
+            4 to listOf("149.154.167.220", "149.154.167.99"),
+            5 to listOf("149.154.170.100"),
+        )
+
+        /** Pre-0.3 default, kept to migrate saved settings. */
+        val LEGACY_DC_REDIRECTS: Map<Int, List<String>> =
+            mapOf(2 to listOf("149.154.167.220"), 4 to listOf("149.154.167.220"))
 
         fun randomSecret(): String = ByteArray(16).also { MtProto.random.nextBytes(it) }.toHex()
 
         fun isValidSecret(s: String): Boolean =
             s.length == 32 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
-        /** Parses lines / comma separated entries like "2:149.154.167.220". */
-        fun parseDcIpList(text: String): Map<Int, String> {
-            val result = LinkedHashMap<Int, String>()
+        /** Parses lines / comma separated entries like "2:149.154.167.220"; a DC may repeat. */
+        fun parseDcIpList(text: String): Map<Int, List<String>> {
+            val result = LinkedHashMap<Int, MutableList<String>>()
             for (entry in text.split(',', ';', '\n', ' ', '\t').map { it.trim() }.filter { it.isNotEmpty() }) {
                 val parts = entry.split(':', limit = 2)
                 require(parts.size == 2) { "Invalid DC:IP entry '$entry'" }
                 val dc = parts[0].trim().toIntOrNull()
                 val ip = parts[1].trim()
                 require(dc != null && isIpv4(ip)) { "Invalid DC:IP entry '$entry'" }
-                result[dc] = ip
+                val list = result.getOrPut(dc) { ArrayList() }
+                if (ip !in list) list.add(ip)
             }
             return result
         }
 
-        fun formatDcIpList(map: Map<Int, String>): String =
-            map.entries.joinToString("\n") { "${it.key}:${it.value}" }
+        fun formatDcIpList(map: Map<Int, List<String>>): String =
+            map.entries.flatMap { (dc, ips) -> ips.map { "$dc:$it" } }.joinToString("\n")
 
         fun parseDomainList(text: String): List<String> {
             val seen = HashSet<String>()
