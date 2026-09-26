@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.TgWsProxy" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand</item>
+    </style>
+</resources>
