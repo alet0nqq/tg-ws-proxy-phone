@@ -9,6 +9,7 @@ class Stats {
     val connectionsWs = AtomicLong()
     val connectionsTcpFallback = AtomicLong()
     val connectionsCfProxy = AtomicLong()
+    val connectionsFronting = AtomicLong()
     val connectionsBad = AtomicLong()
     val wsErrors = AtomicLong()
     val bytesUp = AtomicLong()
@@ -18,7 +19,7 @@ class Stats {
 
     fun reset() {
         listOf(
-            connectionsTotal, connectionsWs, connectionsTcpFallback, connectionsCfProxy, connectionsBad,
+            connectionsTotal, connectionsWs, connectionsTcpFallback, connectionsCfProxy, connectionsFronting, connectionsBad,
             wsErrors, bytesUp, bytesDown, poolHits, poolMisses,
         ).forEach { it.set(0) }
         connectionsActive.set(0)
@@ -28,7 +29,7 @@ class Stats {
         val poolTotal = poolHits.get() + poolMisses.get()
         val pool = if (poolTotal > 0) "${poolHits.get()}/$poolTotal" else "n/a"
         return "total=${connectionsTotal.get()} active=${connectionsActive.get()} ws=${connectionsWs.get()} " +
-            "tcp_fb=${connectionsTcpFallback.get()} cf=${connectionsCfProxy.get()} bad=${connectionsBad.get()} " +
+            "tcp_fb=${connectionsTcpFallback.get()} cf=${connectionsCfProxy.get()} front=${connectionsFronting.get()} bad=${connectionsBad.get()} " +
             "err=${wsErrors.get()} pool=$pool up=${humanBytes(bytesUp.get())} down=${humanBytes(bytesDown.get())}"
     }
 

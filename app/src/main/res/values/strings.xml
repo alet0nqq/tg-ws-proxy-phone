@@ -10,7 +10,7 @@
     <string name="status_stopped">Stopped</string>
     <string name="status_hint">Start the proxy, then add it to Telegram with the button below.</string>
     <string name="status_error">Error: %1$s</string>
-    <string name="stats_line">Connections: %1$d active / %2$d total\nWS: %3$d · CF: %4$d · TCP: %5$d\nTraffic: ↑%6$s ↓%7$s</string>
+    <string name="stats_line">Connections: %1$d active / %2$d total\nWS: %3$d (SNI: %4$d) · CF: %5$d · TCP: %6$d\nTraffic: ↑%7$s ↓%8$s</string>
 
     <string name="action_start">Start</string>
     <string name="action_stop">Stop</string>
@@ -31,6 +31,8 @@
     <string name="setting_cf_domains_help">Empty = public list from the tg-ws-proxy project</string>
     <string name="setting_cf_workers">CF Worker domains (optional)</string>
     <string name="setting_cf_workers_help">Tried first when WebSocket to Telegram fails</string>
+    <string name="setting_fronting">SNI for fronting</string>
+    <string name="setting_fronting_help">Used if a direct TLS connection to Telegram fails. Empty = off</string>
     <string name="setting_pool">Warm WS connections per DC</string>
     <string name="setting_pool_help">0–8. Less = less battery, more = faster start of connections</string>
     <string name="setting_autostart">Start after reboot</string>

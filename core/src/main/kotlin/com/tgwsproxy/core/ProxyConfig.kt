@@ -19,6 +19,11 @@ data class ProxyConfig(
     /** Use port 80 (no TLS) for CF proxy / CF worker. */
     val disableSecure: Boolean = false,
     val forceTestDc: Boolean = false,
+    /**
+     * TLS SNI to try when a direct TLS connection to Telegram's WS IP fails (DPI filtering by SNI).
+     * Empty disables fronting.
+     */
+    val frontingSni: String = DEFAULT_FRONTING_SNI,
     /** Download the fresh CF proxy domain list from GitHub. */
     val refreshCfDomains: Boolean = true,
     // Testing knobs: where kwsN.web.telegram.org lives.
@@ -36,11 +41,12 @@ data class ProxyConfig(
         "https://t.me/proxy?server=$linkHost&port=$port&secret=dd$secret"
 
     fun validate() {
-        require(port in 0..65535) { "port must be 1..65535" }
+        require(port in 0..65535) { "port must be 0..65535" }
         require(isValidSecret(secret)) { "secret must be 32 hex chars" }
     }
 
     companion object {
+        const val DEFAULT_FRONTING_SNI = "sprinthost.ru"
         val DEFAULT_DC_REDIRECTS: Map<Int, String> = mapOf(2 to "149.154.167.220", 4 to "149.154.167.220")
 
         fun randomSecret(): String = ByteArray(16).also { MtProto.random.nextBytes(it) }.toHex()

@@ -36,7 +36,9 @@ class ProxyServer(
     }
     private val executor: ExecutorService = Executors.newCachedThreadPool(threadFactory)
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(threadFactory)
-    private val pool = WsPool(config, stats, log, executor, scheduler)
+    private val pool = WsPool(config, stats, log, executor, scheduler) { ip, domain, path, timeout ->
+        connectTelegramWs(ip, domain, path, timeout)
+    }
     private val balancer = CfBalancer()
     private val secret = config.secretBytes
 
@@ -156,6 +158,56 @@ class ProxyServer(
         log.i("=".repeat(56))
     }
 
+    // ------------------------------------------------------------ telegram WS
+
+    /** Whether TLS with the fronting SNI worked last time (then it is tried first). */
+    @Volatile
+    private var frontingFirst = false
+
+    /**
+     * Opens wss://[domain][path] on [target]. When the plain attempt fails at the network level
+     * (DPI dropping the Telegram SNI), retries with [ProxyConfig.frontingSni] as TLS SNI.
+     */
+    internal fun connectTelegramWs(target: String, domain: String, path: String, timeoutMs: Int): RawWebSocket {
+        val sni = config.frontingSni.trim().takeIf { it.isNotEmpty() && config.wsSecure }
+        val order = when {
+            sni == null -> listOf(null)
+            frontingFirst -> listOf(sni, null)
+            else -> listOf(null, sni)
+        }
+        var last: Exception? = null
+        for (s in order) {
+            try {
+                val ws = RawWebSocket.connect(
+                    target, domain, path = path, timeoutMs = timeoutMs,
+                    secure = config.wsSecure, port = config.wsPort, bufferSize = config.bufferSize, sni = s,
+                )
+                if (sni != null && frontingFirst != (s != null)) {
+                    frontingFirst = s != null
+                    log.i(if (s != null) "SNI fronting works, using it first" else "Direct TLS works again")
+                }
+                if (s != null) stats.connectionsFronting.incrementAndGet()
+                return ws
+            } catch (e: WsHandshakeError) {
+                throw e // TLS got through, the server answered: fronting would not change that
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last!!
+    }
+
+    /** Call when the device switches networks: cached failures and pooled sockets are stale. */
+    fun onNetworkChanged() {
+        if (!isRunning) return
+        ipFailUntil.clear()
+        dcFailUntil.clear()
+        wsBlacklist.clear()
+        frontingFirst = false
+        pool.flush()
+        log.i("Network changed: reset cooldowns and WS pool")
+    }
+
     // ---------------------------------------------------------------- client
 
     private fun handleClient(sock: Socket) {
@@ -201,14 +253,30 @@ class ProxyServer(
             val target = config.dcRedirects[dc]
             val anyCf = config.fallbackCfProxy || config.cfProxyWorkerDomains.isNotEmpty()
             val domains = Endpoints.wsDomains(dc, isMedia)
-            var ws: RawWebSocket? = null
 
+            // Pooled sockets can be dead (e.g. after switching Wi-Fi <-> mobile): the relay init
+            // is the first write, so a failure there is safe to retry on another connection.
+            fun takePooled(): RawWebSocket? {
+                if (isTestDc || target == null) return null
+                while (true) {
+                    val pooled = pool.get(dc, isMedia, target, domains) ?: return null
+                    try {
+                        pooled.send(relayInit)
+                        return pooled
+                    } catch (e: IOException) {
+                        log.d("[$label] DC$dc$mediaTag pooled WS was dead ($e), dropping it")
+                        pooled.close()
+                    }
+                }
+            }
+
+            var ws: RawWebSocket? = null
             if (target == null || dcKey in wsBlacklist || (now < (ipFailUntil[target] ?: 0) && anyCf)) {
                 when {
                     target == null -> log.i("[$label] DC$dc not in config -> fallback")
                     dcKey in wsBlacklist -> log.i("[$label] DC$dc$mediaTag WS blacklisted -> fallback")
                     else -> {
-                        ws = if (!isTestDc) pool.get(dc, isMedia, target, domains) else null
+                        ws = takePooled()
                         if (ws == null) log.i("[$label] DC$dc$mediaTag WS to $target timed out recently -> fallback")
                         else log.i("[$label] DC$dc$mediaTag WS to $target timed out recently, but pool hit -> WS")
                     }
@@ -225,17 +293,21 @@ class ProxyServer(
             var timedOut = false
             var allRedirects = true
 
-            if (ws == null && !isTestDc) ws = pool.get(dc, isMedia, target, domains)
+            if (ws == null) ws = takePooled()
             if (ws != null) {
                 log.i("[$label] DC$dc$mediaTag -> pool hit via $target")
             } else {
                 for (domain in domains) {
                     log.i("[$label] DC$dc$mediaTag -> wss://$domain$wsPath via $target")
                     try {
-                        ws = RawWebSocket.connect(
-                            target, domain, path = wsPath, timeoutMs = wsTimeout,
-                            secure = config.wsSecure, port = config.wsPort, bufferSize = config.bufferSize,
-                        )
+                        val fresh = connectTelegramWs(target, domain, wsPath, wsTimeout)
+                        try {
+                            fresh.send(relayInit)
+                        } catch (e: IOException) {
+                            fresh.close()
+                            throw e
+                        }
+                        ws = fresh
                         allRedirects = false
                         break
                     } catch (e: WsHandshakeError) {
@@ -280,7 +352,6 @@ class ProxyServer(
             ipFailUntil.remove(target)
             pool.reportSuccess(dc, isMedia)
             stats.connectionsWs.incrementAndGet()
-            ws.send(relayInit)
             bridgeWs(conn, ws, MsgSplitter(relayInit, hs.proto))
         } catch (e: EOFException) {
             log.d("[$label] client disconnected")

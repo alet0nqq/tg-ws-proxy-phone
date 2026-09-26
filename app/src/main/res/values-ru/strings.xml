@@ -10,7 +10,7 @@
     <string name="status_stopped">Остановлен</string>
     <string name="status_hint">Запустите прокси, затем добавьте его в Telegram кнопкой ниже.</string>
     <string name="status_error">Ошибка: %1$s</string>
-    <string name="stats_line">Соединения: %1$d активных / %2$d всего\nWS: %3$d · CF: %4$d · TCP: %5$d\nТрафик: ↑%6$s ↓%7$s</string>
+    <string name="stats_line">Соединения: %1$d активных / %2$d всего\nWS: %3$d (SNI: %4$d) · CF: %5$d · TCP: %6$d\nТрафик: ↑%7$s ↓%8$s</string>
 
     <string name="action_start">Запустить</string>
     <string name="action_stop">Остановить</string>
@@ -31,6 +31,8 @@
     <string name="setting_cf_domains_help">Пусто = публичный список проекта tg-ws-proxy</string>
     <string name="setting_cf_workers">Домены CF Worker (необязательно)</string>
     <string name="setting_cf_workers_help">Пробуются первыми, если WebSocket до Telegram не работает</string>
+    <string name="setting_fronting">SNI для маскировки</string>
+    <string name="setting_fronting_help">Используется, если прямое TLS-соединение с Telegram не проходит. Пусто = выключено</string>
     <string name="setting_pool">Заготовленных WS-соединений на DC</string>
     <string name="setting_pool_help">0–8. Меньше — экономнее батарея, больше — быстрее новые соединения</string>
     <string name="setting_autostart">Запускать после перезагрузки</string>

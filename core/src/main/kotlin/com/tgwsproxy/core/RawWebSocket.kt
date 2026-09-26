@@ -187,6 +187,8 @@ class RawWebSocket private constructor(
             port: Int = if (secure) 443 else 80,
             bufferSize: Int = 256 * 1024,
             tls: TlsSettings = TlsSettings.default,
+            /** Fronting: send this TLS SNI instead of [domain] (HTTP Host stays [domain]). */
+            sni: String? = null,
         ): RawWebSocket {
             val raw = Socket()
             try {
@@ -194,15 +196,19 @@ class RawWebSocket private constructor(
                 raw.connect(InetSocketAddress(host, port), minOf(timeoutMs, 10_000))
                 raw.soTimeout = timeoutMs
                 val sock: Socket = if (secure) {
+                    val tlsName = sni ?: domain
                     val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory)
-                        .createSocket(raw, domain, port, true) as SSLSocket
+                        .createSocket(raw, tlsName, port, true) as SSLSocket
                     val params = ssl.sslParameters
-                    params.serverNames = listOf(SNIHostName(domain))
-                    if (tls.useEndpointIdentification) params.endpointIdentificationAlgorithm = "HTTPS"
+                    params.serverNames = listOf(SNIHostName(tlsName))
+                    if (sni == null && tls.useEndpointIdentification) params.endpointIdentificationAlgorithm = "HTTPS"
                     ssl.sslParameters = params
                     ssl.startHandshake()
-                    val verifier = tls.hostnameVerifier
-                    if (verifier != null && !verifier.verify(domain, ssl.session)) {
+                    // Fronting (as upstream): the chain must be trusted, but the name is not checked,
+                    // since the server may pick its certificate by SNI. MTProto inside stays
+                    // end-to-end encrypted with Telegram's pinned keys either way.
+                    val ok = sni != null || (tls.hostnameVerifier?.verify(domain, ssl.session) ?: true)
+                    if (!ok) {
                         ssl.close()
                         throw IOException("TLS certificate does not match $domain")
                     }

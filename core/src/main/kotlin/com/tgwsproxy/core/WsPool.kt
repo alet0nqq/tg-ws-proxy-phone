@@ -17,6 +17,7 @@ internal class WsPool(
     private val log: ProxyLog,
     private val executor: ExecutorService,
     private val scheduler: ScheduledExecutorService,
+    private val connector: (ip: String, domain: String, path: String, timeoutMs: Int) -> RawWebSocket,
 ) {
     private data class Key(val dc: Int, val isMedia: Boolean)
     private class Entry(val ws: RawWebSocket, val created: Long)
@@ -82,6 +83,19 @@ internal class WsPool(
             failures.remove(key)
             refillAfter.remove(key)
         }
+    }
+
+    /** Drop all idle connections and refill backoffs (network changed). */
+    fun flush() {
+        val all = synchronized(this) {
+            failures.clear()
+            refillAfter.clear()
+            val list = idle.values.flatMap { q -> q.map { it.ws } }
+            idle.clear()
+            list
+        }
+        all.forEach { quietClose(it) }
+        synchronized(this) { targets.keys.toList() }.forEach { scheduleRefill(it) }
     }
 
     fun shutdown() {
@@ -167,10 +181,7 @@ internal class WsPool(
     private fun connectOne(target: Target): RawWebSocket? {
         for (domain in target.domains) {
             try {
-                return RawWebSocket.connect(
-                    target.ip, domain, path = Endpoints.WS_PATH, timeoutMs = 8_000,
-                    secure = config.wsSecure, port = config.wsPort, bufferSize = config.bufferSize,
-                )
+                return connector(target.ip, domain, Endpoints.WS_PATH, 8_000)
             } catch (e: WsHandshakeError) {
                 if (e.isRedirect) continue
                 return null

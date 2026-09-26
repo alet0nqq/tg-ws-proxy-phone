@@ -9,6 +9,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -35,6 +37,25 @@ class ProxyService : Service() {
                 handler.postDelayed(this, NOTIFICATION_REFRESH_MS)
             }
         }
+    }
+
+    /** Wi-Fi <-> mobile switches leave pooled sockets dead and cooldowns meaningless. */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        private var current: Network? = null
+
+        override fun onAvailable(network: Network) {
+            val previous = current
+            current = network
+            if (previous != null && previous != network) server?.onNetworkChanged()
+        }
+    }
+    private var networkCallbackRegistered = false
+
+    override fun onCreate() {
+        super.onCreate()
+        networkCallbackRegistered = runCatching {
+            getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
+        }.isSuccess
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -103,6 +124,9 @@ class ProxyService : Service() {
 
     override fun onDestroy() {
         synchronized(ProxyService) { destroyed = true }
+        if (networkCallbackRegistered) {
+            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
+        }
         handler.removeCallbacksAndMessages(null)
         starting = false
         stopProxy()

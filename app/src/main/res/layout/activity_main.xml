@@ -237,6 +237,21 @@
                     android:maxLength="2" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="@string/setting_fronting"
+                app:helperText="@string/setting_fronting_help">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/frontingInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textNoSuggestions|textUri" />
+            </com.google.android.material.textfield.TextInputLayout>
+
             <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/autostartSwitch"
                 android:layout_width="match_parent"

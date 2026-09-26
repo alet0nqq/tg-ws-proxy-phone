@@ -35,6 +35,10 @@ class Settings(context: Context) {
         get() = prefs.getString(KEY_CF_WORKERS, "") ?: ""
         set(v) = prefs.edit().putString(KEY_CF_WORKERS, v).apply()
 
+    var frontingSni: String
+        get() = prefs.getString(KEY_FRONTING, null) ?: ProxyConfig.DEFAULT_FRONTING_SNI
+        set(v) = prefs.edit().putString(KEY_FRONTING, v).apply()
+
     var poolSize: Int
         get() = prefs.getInt(KEY_POOL, 2)
         set(v) = prefs.edit().putInt(KEY_POOL, v).apply()
@@ -62,6 +66,7 @@ class Settings(context: Context) {
         fallbackCfProxy = cfProxy,
         cfProxyUserDomains = ProxyConfig.parseDomainList(cfDomains),
         cfProxyWorkerDomains = ProxyConfig.parseDomainList(cfWorkerDomains),
+        frontingSni = frontingSni.trim(),
     ).also { it.validate() }
 
     companion object {
@@ -72,6 +77,7 @@ class Settings(context: Context) {
         private const val KEY_CF_PROXY = "cf_proxy"
         private const val KEY_CF_DOMAINS = "cf_domains"
         private const val KEY_CF_WORKERS = "cf_workers"
+        private const val KEY_FRONTING = "fronting_sni"
         private const val KEY_POOL = "pool_size"
         private const val KEY_AUTOSTART = "autostart"
         private const val KEY_VERBOSE = "verbose"

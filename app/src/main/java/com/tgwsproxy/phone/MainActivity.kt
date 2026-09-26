@@ -114,7 +114,7 @@ class MainActivity : AppCompatActivity() {
                 getString(
                     R.string.stats_line,
                     connectionsActive.get(), connectionsTotal.get(),
-                    connectionsWs.get(), connectionsCfProxy.get(), connectionsTcpFallback.get(),
+                    connectionsWs.get(), connectionsFronting.get(), connectionsCfProxy.get(), connectionsTcpFallback.get(),
                     Stats.humanBytes(bytesUp.get()), Stats.humanBytes(bytesDown.get()),
                 )
             }
@@ -145,6 +145,7 @@ class MainActivity : AppCompatActivity() {
         binding.cfDomainsInput.setText(settings.cfDomains)
         binding.cfWorkersInput.setText(settings.cfWorkerDomains)
         binding.poolInput.setText(settings.poolSize.toString())
+        binding.frontingInput.setText(settings.frontingSni)
         binding.autostartSwitch.isChecked = settings.autostart
         binding.verboseSwitch.isChecked = settings.verbose
     }
@@ -177,6 +178,7 @@ class MainActivity : AppCompatActivity() {
         settings.cfDomains = binding.cfDomainsInput.text.toString().trim()
         settings.cfWorkerDomains = binding.cfWorkersInput.text.toString().trim()
         settings.poolSize = pool
+        settings.frontingSni = binding.frontingInput.text.toString().trim()
         settings.autostart = binding.autostartSwitch.isChecked
         settings.verbose = binding.verboseSwitch.isChecked
         LogBuffer.verbose = settings.verbose
@@ -200,6 +202,7 @@ class MainActivity : AppCompatActivity() {
                 binding.cfDomainsInput.setText("")
                 binding.cfWorkersInput.setText("")
                 binding.poolInput.setText("2")
+                binding.frontingInput.setText(ProxyConfig.DEFAULT_FRONTING_SNI)
                 saveSettings()
             }
             .setNegativeButton(android.R.string.cancel, null)
