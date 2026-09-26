@@ -190,6 +190,8 @@ class ProxyServer(
                 return ws
             } catch (e: WsHandshakeError) {
                 throw e // TLS got through, the server answered: fronting would not change that
+            } catch (e: TcpConnectException) {
+                throw e // the IP itself is unreachable: another SNI would only add a second timeout
             } catch (e: Exception) {
                 last = e
             }

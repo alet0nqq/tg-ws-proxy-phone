@@ -21,6 +21,9 @@ class WsHandshakeError(val statusCode: Int, val statusLine: String, val location
     val isRedirect: Boolean get() = statusCode in setOf(301, 302, 303, 307, 308)
 }
 
+/** The TCP connection itself failed (before TLS), so a different SNI cannot help. */
+class TcpConnectException(val host: String, cause: Exception) : IOException("TCP connect to $host failed: $cause", cause)
+
 /** Minimal blocking binary WebSocket client (port of raw_websocket.py). */
 class RawWebSocket private constructor(
     private val socket: Socket,
@@ -193,7 +196,11 @@ class RawWebSocket private constructor(
             val raw = Socket()
             try {
                 configureSocket(raw, bufferSize)
-                raw.connect(InetSocketAddress(host, port), minOf(timeoutMs, 10_000))
+                try {
+                    raw.connect(InetSocketAddress(host, port), minOf(timeoutMs, 10_000))
+                } catch (e: IOException) {
+                    throw TcpConnectException(host, e)
+                }
                 raw.soTimeout = timeoutMs
                 val sock: Socket = if (secure) {
                     val tlsName = sni ?: domain
