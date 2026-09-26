@@ -1,0 +1,54 @@
+<resources>
+    <string name="app_name">TG WS Proxy</string>
+    <string name="tile_label">TG Прокси</string>
+    <string name="channel_name">Статус прокси</string>
+    <string name="notification_title">Прокси работает на 127.0.0.1:%1$d</string>
+    <string name="notification_stats">Активно: %1$d · ↑%2$s ↓%3$s</string>
+
+    <string name="status_running">● Работает</string>
+    <string name="status_starting">Запуск…</string>
+    <string name="status_stopped">Остановлен</string>
+    <string name="status_hint">Запустите прокси, затем добавьте его в Telegram кнопкой ниже.</string>
+    <string name="status_error">Ошибка: %1$s</string>
+    <string name="stats_line">Соединения: %1$d активных / %2$d всего\nWS: %3$d · CF: %4$d · TCP: %5$d\nТрафик: ↑%6$s ↓%7$s</string>
+
+    <string name="action_start">Запустить</string>
+    <string name="action_stop">Остановить</string>
+    <string name="connect_title">Подключение Telegram</string>
+    <string name="connect_hint">Telegram предложит добавить MTProto-прокси 127.0.0.1 — нажмите «Подключить». Это нужно сделать один раз (или после смены порта/секрета).</string>
+    <string name="action_add_to_telegram">Добавить прокси в Telegram</string>
+    <string name="action_copy_link">Скопировать ссылку</string>
+    <string name="action_battery">Отключить оптимизацию батареи (рекомендуется)</string>
+
+    <string name="settings_title">Настройки ▾</string>
+    <string name="setting_port">Порт</string>
+    <string name="setting_secret">Секрет (32 hex)</string>
+    <string name="action_regen">Новый</string>
+    <string name="setting_dc_ips">DC → IP</string>
+    <string name="setting_dc_ips_help">По одному в строке, например 2:149.154.167.220. Остальные DC идут через запасные пути.</string>
+    <string name="setting_cf_proxy">Запасной путь через Cloudflare</string>
+    <string name="setting_cf_domains">Свои CF-домены (необязательно)</string>
+    <string name="setting_cf_domains_help">Пусто = публичный список проекта tg-ws-proxy</string>
+    <string name="setting_cf_workers">Домены CF Worker (необязательно)</string>
+    <string name="setting_cf_workers_help">Пробуются первыми, если WebSocket до Telegram не работает</string>
+    <string name="setting_pool">Заготовленных WS-соединений на DC</string>
+    <string name="setting_pool_help">0–8. Меньше — экономнее батарея, больше — быстрее новые соединения</string>
+    <string name="setting_autostart">Запускать после перезагрузки</string>
+    <string name="setting_verbose">Подробные логи</string>
+    <string name="action_save">Сохранить</string>
+    <string name="action_reset">Сбросить</string>
+    <string name="reset_confirm">Сбросить сетевые настройки по умолчанию? Секрет останется прежним.</string>
+
+    <string name="logs_title">Логи</string>
+    <string name="action_copy">Копировать</string>
+    <string name="action_clear">Очистить</string>
+    <string name="copied">Скопировано</string>
+    <string name="saved">Сохранено</string>
+    <string name="saved_link_changed">Сохранено. Порт или секрет изменились — добавьте прокси в Telegram заново.</string>
+
+    <string name="error_port">Порт должен быть 1024–65535</string>
+    <string name="error_port_busy">Порт %1$d уже занят. Выберите другой порт в настройках.</string>
+    <string name="error_secret">Секрет должен состоять из 32 hex-символов</string>
+    <string name="error_dc_ips">Неверный список DC → IP</string>
+    <string name="error_no_telegram">Telegram не установлен. Скопируйте ссылку и откройте её в Telegram.</string>
+</resources>
